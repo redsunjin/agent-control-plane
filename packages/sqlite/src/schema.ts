@@ -95,6 +95,21 @@ CREATE TABLE IF NOT EXISTS handoff_tickets (
 CREATE INDEX IF NOT EXISTS idx_handoff_tickets_status_created_at
   ON handoff_tickets (status, created_at);
 
+CREATE TABLE IF NOT EXISTS execution_results (
+  execution_result_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  result_summary TEXT NOT NULL,
+  executor_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES action_requests (task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_results_task_id_finished_at
+  ON execution_results (task_id, finished_at);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   event_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,

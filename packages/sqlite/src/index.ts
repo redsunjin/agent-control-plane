@@ -4,6 +4,7 @@ import {
   type ActionRequest,
   type ApprovalDecision,
   type AuditEventRecord,
+  type ExecutionResult,
   type JsonValue,
   type PolicyDecision,
   type HandoffTicket,
@@ -59,6 +60,14 @@ export interface CreateHandoffTicketInput extends HandoffTicket {
 export interface PersistedHandoffTicket extends HandoffTicket {
   handoffTicketId: string;
   closedAt?: string | null;
+}
+
+export interface CreateExecutionResultInput extends ExecutionResult {
+  executionResultId: string;
+}
+
+export interface PersistedExecutionResult extends ExecutionResult {
+  executionResultId: string;
 }
 
 type ActionRequestRow = {
@@ -131,6 +140,17 @@ type HandoffTicketRow = {
   status: HandoffTicket["status"];
   created_at: string;
   closed_at: string | null;
+};
+
+type ExecutionResultRow = {
+  execution_result_id: string;
+  task_id: string;
+  execution_id: string;
+  status: ExecutionResult["status"];
+  result_summary: string;
+  executor_id: string;
+  started_at: string;
+  finished_at: string;
 };
 
 export class AuditIntegrityError extends Error {
@@ -574,6 +594,60 @@ export class SqliteAdapter {
     return row === undefined ? null : mapHandoffTicketRow(row);
   }
 
+  createExecutionResult(
+    input: CreateExecutionResultInput,
+  ): PersistedExecutionResult {
+    this.database
+      .prepare(`
+        INSERT INTO execution_results (
+          execution_result_id,
+          task_id,
+          execution_id,
+          status,
+          result_summary,
+          executor_id,
+          started_at,
+          finished_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.executionResultId,
+        input.taskId,
+        input.executionId,
+        input.status,
+        input.resultSummary,
+        input.executorId,
+        input.startedAt,
+        input.finishedAt,
+      );
+
+    return {
+      ...input,
+    };
+  }
+
+  getLatestExecutionResult(taskId: string): PersistedExecutionResult | null {
+    const row = this.database
+      .prepare(`
+        SELECT
+          execution_result_id,
+          task_id,
+          execution_id,
+          status,
+          result_summary,
+          executor_id,
+          started_at,
+          finished_at
+        FROM execution_results
+        WHERE task_id = ?
+        ORDER BY finished_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskId) as ExecutionResultRow | undefined;
+
+    return row === undefined ? null : mapExecutionResultRow(row);
+  }
+
   private getLatestAuditEvent(taskId: string): AuditEventRecord | null {
     const row = this.database
       .prepare(`
@@ -687,6 +761,21 @@ function mapHandoffTicketRow(row: HandoffTicketRow): PersistedHandoffTicket {
     status: row.status,
     createdAt: row.created_at,
     closedAt: row.closed_at,
+  };
+}
+
+function mapExecutionResultRow(
+  row: ExecutionResultRow,
+): PersistedExecutionResult {
+  return {
+    executionResultId: row.execution_result_id,
+    taskId: row.task_id,
+    executionId: row.execution_id,
+    status: row.status,
+    resultSummary: row.result_summary,
+    executorId: row.executor_id,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
   };
 }
 

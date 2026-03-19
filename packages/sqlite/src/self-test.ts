@@ -225,10 +225,41 @@ function testPolicyApprovalAndHandoffPersistence(): void {
   adapter.close();
 }
 
+function testExecutionResultPersistence(): void {
+  const adapter = new SqliteAdapter({ filename: ":memory:" });
+  const request = buildRequest("task-4");
+
+  adapter.createActionRequest({
+    request,
+    state: "approved",
+  });
+
+  adapter.createExecutionResult({
+    executionResultId: "exec-result-1",
+    taskId: request.taskId,
+    executionId: "exec-1",
+    status: "succeeded",
+    resultSummary: "updated local file",
+    executorId: "local-record-update",
+    startedAt: "2026-03-19T12:04:00.000Z",
+    finishedAt: "2026-03-19T12:04:01.000Z",
+  });
+
+  const latestExecutionResult = adapter.getLatestExecutionResult(request.taskId);
+
+  assert(
+    latestExecutionResult?.status === "succeeded",
+    "latest execution result should be retrievable",
+  );
+
+  adapter.close();
+}
+
 function run(): void {
   testActionRequestLifecycle();
   testAuditAppendAndRead();
   testPolicyApprovalAndHandoffPersistence();
+  testExecutionResultPersistence();
   console.log("packages/sqlite self-test passed");
 }
 
