@@ -18,7 +18,7 @@ export const TASK_STATE_TRANSITIONS: Record<TaskState, readonly TaskState[]> = {
     "expired",
     "handoff_required",
   ],
-  approved: ["executing"],
+  approved: ["executing", "handoff_required"],
   rejected: [],
   executing: ["succeeded", "failed"],
   succeeded: [],

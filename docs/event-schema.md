@@ -118,6 +118,7 @@ State transitions:
 - `failed -> handoff_required`
 - `approval_required -> handoff_required`
 - `policy_evaluating -> handoff_required`
+- `approved -> handoff_required`
 
 ### 8. `handoff.completed`
 Emitted when a human handoff is completed.
