@@ -2,7 +2,9 @@ import {
   assertTransitionTaskState,
   canExecuteTask,
   canTransitionTaskState,
+  createActionSchemaHash,
   createAuditEvent,
+  evaluatePolicy,
   resolveApprovalDecisionState,
   resolvePolicyDecisionState,
   verifyAuditChain,
@@ -45,6 +47,50 @@ function testStateMachine(): void {
   );
   assert(canExecuteTask("approved"), "approved should be executable");
   assert(!canExecuteTask("approval_required"), "approval_required is not executable");
+}
+
+function testPolicyEvaluator(): void {
+  const request = {
+    taskId: "task-policy",
+    actionId: "action-policy",
+    actorId: "agent-1",
+    tool: "local-file-tool",
+    operation: "record_update" as const,
+    resourceType: "local_markdown",
+    resourceId: "/tmp/policy.md",
+    riskLevel: "high" as const,
+    expectedEffect: "update a local markdown record",
+    payload: {
+      patch: "replace summary",
+    },
+    policyContext: {
+      environment: "test",
+    },
+    idempotencyKey: "idem-policy",
+    submittedAt: "2026-03-19T12:00:00.000Z",
+  };
+
+  const highRiskDecision = evaluatePolicy({ request });
+  const unknownFieldDecision = evaluatePolicy({
+    request: {
+      ...request,
+      taskId: "task-policy-2",
+    },
+    hasUnknownFields: true,
+  });
+
+  assert(
+    highRiskDecision.decision === "approval_required",
+    "high risk requests should require approval",
+  );
+  assert(
+    unknownFieldDecision.decision === "handoff_required",
+    "unknown fields should require handoff",
+  );
+  assert(
+    createActionSchemaHash(request) === createActionSchemaHash(request),
+    "action schema hash should be deterministic",
+  );
 }
 
 function testAuditChain(): void {
@@ -96,6 +142,7 @@ function testAuditChain(): void {
 
 function run(): void {
   testStateMachine();
+  testPolicyEvaluator();
   testAuditChain();
   console.log("packages/core self-test passed");
 }

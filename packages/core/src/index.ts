@@ -45,8 +45,8 @@ export {
 export {
   canonicalizeJson,
   createAuditEvent,
-  createDeterministicHash,
   createPayloadHash,
+  createDeterministicHash,
   verifyAuditChain,
   verifyAuditEvent,
 } from "./audit.js";
@@ -55,3 +55,13 @@ export type {
   CreateAuditEventInput,
   HashFunction,
 } from "./audit.js";
+export {
+  createActionSchemaHash,
+  evaluatePolicy,
+  isLocalScope,
+  isSupportedResourceType,
+} from "./policy.js";
+export type {
+  EvaluatePolicyInput,
+  EvaluatedPolicyDecision,
+} from "./policy.js";
