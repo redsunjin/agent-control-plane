@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@agent-control-plane/core": "0.1.0",
-    "@agent-control-plane/sqlite": "0.1.0"
+    "@agent-control-plane/sqlite": "0.1.0",
+    "yaml": "^2.8.2"
   }
 }

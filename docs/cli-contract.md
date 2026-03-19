@@ -123,7 +123,7 @@ Rules:
 
 ## Error Cases
 - required field missing
-- unknown field or schema drift
+- unknown field or schema drift routes the request to `handoff_required`
 - `approve` called from an invalid state
 - approval attempted after a request is already approved
 - expired approval artifact
