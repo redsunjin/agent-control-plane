@@ -1,0 +1,20 @@
+{
+  "name": "agent-control-plane-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Workspace for the Agent Control Plane open-source library",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
