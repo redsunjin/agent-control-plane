@@ -5,6 +5,7 @@ import {
   type ApprovalDecision,
   type AuditEventRecord,
   type ExecutionResult,
+  type HandoffStatus,
   type JsonValue,
   type PolicyDecision,
   type HandoffTicket,
@@ -164,6 +165,13 @@ export class TaskNotFoundError extends Error {
   constructor(taskId: string) {
     super(`Task not found: ${taskId}`);
     this.name = "TaskNotFoundError";
+  }
+}
+
+export class HandoffTicketNotFoundError extends Error {
+  constructor(taskId: string) {
+    super(`Open handoff ticket not found for task: ${taskId}`);
+    this.name = "HandoffTicketNotFoundError";
   }
 }
 
@@ -592,6 +600,47 @@ export class SqliteAdapter {
       .get(taskId) as HandoffTicketRow | undefined;
 
     return row === undefined ? null : mapHandoffTicketRow(row);
+  }
+
+  completeLatestOpenHandoffTicket(
+    taskId: string,
+    closedAt: string,
+  ): PersistedHandoffTicket {
+    const row = this.database
+      .prepare(`
+        SELECT
+          handoff_ticket_id,
+          task_id,
+          handoff_reason,
+          required_context,
+          assigned_to,
+          status,
+          created_at,
+          closed_at
+        FROM handoff_tickets
+        WHERE task_id = ? AND status = 'open'
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskId) as HandoffTicketRow | undefined;
+
+    if (row === undefined) {
+      throw new HandoffTicketNotFoundError(taskId);
+    }
+
+    this.database
+      .prepare(`
+        UPDATE handoff_tickets
+        SET status = ?, closed_at = ?
+        WHERE handoff_ticket_id = ?
+      `)
+      .run("completed" satisfies HandoffStatus, closedAt, row.handoff_ticket_id);
+
+    return {
+      ...mapHandoffTicketRow(row),
+      status: "completed",
+      closedAt,
+    };
   }
 
   createExecutionResult(

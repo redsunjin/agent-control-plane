@@ -8,6 +8,7 @@ import {
 
 import {
   AuditIntegrityError,
+  HandoffTicketNotFoundError,
   SqliteAdapter,
   TaskNotFoundError,
 } from "./index.js";
@@ -255,11 +256,52 @@ function testExecutionResultPersistence(): void {
   adapter.close();
 }
 
+function testHandoffCompletionPersistence(): void {
+  const adapter = new SqliteAdapter({ filename: ":memory:" });
+  const request = buildRequest("task-5");
+
+  adapter.createActionRequest({
+    request,
+    state: "handoff_required",
+  });
+  adapter.createHandoffTicket({
+    handoffTicketId: "ho-2",
+    taskId: request.taskId,
+    handoffReason: "missing_context",
+    requiredContext: {
+      queue: "ops-queue",
+    },
+    assignedTo: "ops-queue",
+    status: "open",
+    createdAt: "2026-03-19T12:05:00.000Z",
+  });
+
+  const completed = adapter.completeLatestOpenHandoffTicket(
+    request.taskId,
+    "2026-03-19T12:06:00.000Z",
+  );
+
+  assert(completed.status === "completed", "handoff ticket should complete");
+  assert(completed.closedAt === "2026-03-19T12:06:00.000Z", "handoff closedAt should persist");
+
+  let missingHandoffError = false;
+
+  try {
+    adapter.completeLatestOpenHandoffTicket("missing-task", "2026-03-19T12:07:00.000Z");
+  } catch (error) {
+    missingHandoffError = error instanceof HandoffTicketNotFoundError;
+  }
+
+  assert(missingHandoffError, "missing open handoff tickets should fail");
+  adapter.close();
+}
+
 function run(): void {
   testActionRequestLifecycle();
   testAuditAppendAndRead();
   testPolicyApprovalAndHandoffPersistence();
   testExecutionResultPersistence();
+  testHandoffCompletionPersistence();
   console.log("packages/sqlite self-test passed");
 }
 
