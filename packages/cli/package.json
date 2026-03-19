@@ -9,8 +9,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "build": "npm run build --workspace @agent-control-plane/sqlite && tsc -p tsconfig.json",
+    "check": "npm run build --workspace @agent-control-plane/sqlite && tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node dist/self-test.js"
   },
   "dependencies": {
     "@agent-control-plane/core": "0.1.0",
