@@ -1,0 +1,20 @@
+{
+  "task_id": "demo-handoff-unknown-field",
+  "action_id": "action-demo-handoff-unknown-field",
+  "actor_id": "agent-1",
+  "tool": "local-file-tool",
+  "operation": "record_update",
+  "resource_type": "local_markdown",
+  "resource_id": "examples/local-record-update/resources/record.md",
+  "risk_level": "low",
+  "expected_effect": "trigger handoff because of schema drift",
+  "payload": {
+    "content": "# This Should Not Execute\n"
+  },
+  "policy_context": {
+    "environment": "example"
+  },
+  "idempotency_key": "demo-handoff-unknown-field-1",
+  "submitted_at": "2026-03-19T15:02:00.000Z",
+  "extra_field": "unexpected"
+}

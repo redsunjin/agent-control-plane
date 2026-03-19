@@ -1,0 +1,15 @@
+task_id: demo-remote-deny
+action_id: action-demo-remote-deny
+actor_id: agent-1
+tool: local-file-tool
+operation: record_update
+resource_type: remote_api
+resource_id: remote-demo-1
+risk_level: low
+expected_effect: try to update an unsupported remote resource
+payload:
+  patch: replace summary
+policy_context:
+  environment: example
+idempotency_key: demo-remote-deny-1
+submitted_at: 2026-03-19T15:01:00.000Z

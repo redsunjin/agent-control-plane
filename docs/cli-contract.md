@@ -114,6 +114,20 @@ Behavior:
 - verify the task is in `handoff_required` or a recognized equivalent exception state
 - create a handoff ticket with the required context
 
+### `acp complete-handoff <task-id> --resolver <id> --summary <text>`
+Complete an open human handoff ticket.
+
+Example:
+```bash
+acp complete-handoff T-1001 --resolver alice --summary resolved
+```
+
+Behavior:
+- verify the task is in `handoff_required`
+- complete the latest open handoff ticket
+- record `handoff.completed`
+- move the task to `handoff_completed`
+
 ### `acp audit <task-id>`
 Inspect the append-only audit trail for a task.
 
@@ -123,6 +137,14 @@ Output:
 - approval or rejection history
 - execution result
 - failure or handoff reason
+
+### `acp verify-audit <task-id>`
+Verify the stored audit chain for a task.
+
+Output:
+- event count
+- verification result
+- integrity issues when present
 
 ## Exit Codes
 - `0`: success
@@ -143,7 +165,7 @@ Rules:
 - `execute` called from an invalid state
 - approval attempted after a request is already approved
 - expired approval artifact
-- payload changed after approval
+- payload changed after approval routes the task to `handoff_required`
 - `handoff` called without a valid target
 - audit append failure
 
@@ -154,6 +176,7 @@ acp submit action-request.json
 acp inspect T-1001
 acp approve T-1001 --approver alice
 acp execute T-1001
+acp verify-audit T-1001
 acp audit T-1001
 ```
 
@@ -161,6 +184,7 @@ Expected result:
 - `submit` ends in `approval_required`
 - `approve` moves the task to `approved`
 - `execute` moves the task to `succeeded` or `failed`
+- `verify-audit` confirms the stored chain is intact
 - `audit` reconstructs the full event sequence
 
 ### 2. Policy Denial Path

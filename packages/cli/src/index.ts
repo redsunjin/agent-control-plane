@@ -10,6 +10,7 @@ import {
   evaluatePolicy,
   resolveApprovalDecisionState,
   resolvePolicyDecisionState,
+  verifyAuditChain,
   type ActionRequest,
   type JsonObject,
   type JsonValue,
@@ -31,6 +32,8 @@ type CliCommand =
   | "reject"
   | "handoff"
   | "audit"
+  | "complete-handoff"
+  | "verify-audit"
   | "help";
 
 interface ParsedArgs {
@@ -40,6 +43,8 @@ interface ParsedArgs {
   approverId?: string;
   reason?: string;
   handoffQueue?: string;
+  resolverId?: string;
+  summary?: string;
   dbFilename: string;
 }
 
@@ -65,6 +70,10 @@ function main(argv: readonly string[]): number {
         return runHandoff(parsed);
       case "audit":
         return runAudit(parsed);
+      case "complete-handoff":
+        return runCompleteHandoff(parsed);
+      case "verify-audit":
+        return runVerifyAudit(parsed);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -90,7 +99,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     command !== "approve" &&
     command !== "reject" &&
     command !== "handoff" &&
-    command !== "audit"
+    command !== "audit" &&
+    command !== "complete-handoff" &&
+    command !== "verify-audit"
   ) {
     throw new Error(`Unknown command: ${command}`);
   }
@@ -100,6 +111,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let approverId: string | undefined;
   let reason: string | undefined;
   let handoffQueue: string | undefined;
+  let resolverId: string | undefined;
+  let summary: string | undefined;
   let dbFilename = resolveDbFilename();
 
   for (let index = 1; index < argv.length; index += 1) {
@@ -154,6 +167,30 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         continue;
       }
 
+      if (token === "--resolver") {
+        const value = argv[index + 1];
+
+        if (value === undefined || value.startsWith("-")) {
+          throw new Error("--resolver requires an id");
+        }
+
+        resolverId = value;
+        index += 1;
+        continue;
+      }
+
+      if (token === "--summary") {
+        const value = argv[index + 1];
+
+        if (value === undefined || value.startsWith("-")) {
+          throw new Error("--summary requires text");
+        }
+
+        summary = value;
+        index += 1;
+        continue;
+      }
+
       throw new Error(`Unknown option: ${token}`);
     }
 
@@ -199,6 +236,16 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
+  if (command === "complete-handoff") {
+    if (resolverId === undefined) {
+      throw new Error("complete-handoff requires --resolver <id>");
+    }
+
+    if (summary === undefined) {
+      throw new Error("complete-handoff requires --summary <text>");
+    }
+  }
+
   return {
     command,
     taskId,
@@ -206,6 +253,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     approverId,
     reason,
     handoffQueue,
+    resolverId,
+    summary,
     dbFilename,
   };
 }
@@ -276,6 +325,55 @@ function runExecute(parsed: ParsedArgs): number {
     if (request.state !== "approved") {
       console.error(`Task ${request.taskId} is not ready for execution`);
       return EXIT_INVALID_INPUT;
+    }
+
+    const latestApprovalDecision = adapter.getLatestApprovalDecision(request.taskId);
+    const currentActionSchemaHash = createActionSchemaHash(request);
+
+    if (
+      latestApprovalDecision !== null &&
+      latestApprovalDecision.actionSchemaHash !== currentActionSchemaHash
+    ) {
+      const mismatchAt = new Date().toISOString();
+      const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+
+      adapter.runInTransaction(() => {
+        assertTransitionTaskState(request.state, "handoff_required");
+        adapter.updateActionRequestState(request.taskId, "handoff_required", mismatchAt);
+        adapter.createHandoffTicket({
+          handoffTicketId: `${request.taskId}:handoff:approval-mismatch`,
+          taskId: request.taskId,
+          handoffReason: "approval_payload_mismatch",
+          requiredContext: {
+            expectedActionSchemaHash: latestApprovalDecision.actionSchemaHash,
+            actualActionSchemaHash: currentActionSchemaHash,
+          },
+          assignedTo: "ops-queue",
+          status: "open",
+          createdAt: mismatchAt,
+        });
+        adapter.appendAuditEvent(
+          createAuditEvent({
+            eventId: `${request.taskId}:handoff.requested:approval-mismatch`,
+            taskId: request.taskId,
+            eventType: "handoff.requested",
+            state: "handoff_required",
+            actorType: "system",
+            actorId: "approval-guard",
+            occurredAt: mismatchAt,
+            prevEventHash: latestAuditEvent?.eventHash,
+            payload: {
+              handoffReason: "approval_payload_mismatch",
+              assignedTo: "ops-queue",
+            },
+          }),
+        );
+      });
+
+      console.error(
+        `approval-bound action hash mismatch for task ${request.taskId}; task moved to handoff_required`,
+      );
+      return EXIT_INTERNAL_ERROR;
     }
 
     const startedAt = new Date().toISOString();
@@ -743,6 +841,61 @@ function runHandoff(parsed: ParsedArgs): number {
   }
 }
 
+function runCompleteHandoff(parsed: ParsedArgs): number {
+  const adapter = new SqliteAdapter({ filename: parsed.dbFilename });
+
+  try {
+    const request = adapter.getActionRequest(parsed.taskId!);
+
+    if (request === null) {
+      console.error(`Task not found: ${parsed.taskId}`);
+      return EXIT_NOT_FOUND;
+    }
+
+    if (request.state !== "handoff_required") {
+      console.error(`Task ${request.taskId} is not awaiting handoff completion`);
+      return EXIT_INVALID_INPUT;
+    }
+
+    const completedAt = new Date().toISOString();
+    const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+
+    adapter.runInTransaction(() => {
+      adapter.completeLatestOpenHandoffTicket(request.taskId, completedAt);
+      assertTransitionTaskState(request.state, "handoff_completed");
+      adapter.updateActionRequestState(request.taskId, "handoff_completed", completedAt);
+      adapter.appendAuditEvent(
+        createAuditEvent({
+          eventId: `${request.taskId}:handoff.completed`,
+          taskId: request.taskId,
+          eventType: "handoff.completed",
+          state: "handoff_completed",
+          actorType: "human",
+          actorId: parsed.resolverId!,
+          occurredAt: completedAt,
+          prevEventHash: latestAuditEvent?.eventHash,
+          payload: {
+            assignedTo: parsed.resolverId!,
+            resolutionSummary: parsed.summary!,
+          },
+        }),
+      );
+    });
+
+    console.log(`task_id: ${request.taskId}`);
+    console.log(`state: handoff_completed`);
+    console.log(`resolver: ${parsed.resolverId!}`);
+    console.log(`summary: ${parsed.summary!}`);
+    return EXIT_SUCCESS;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    return EXIT_INTERNAL_ERROR;
+  } finally {
+    adapter.close();
+  }
+}
+
 function runAudit(parsed: ParsedArgs): number {
   const adapter = new SqliteAdapter({ filename: parsed.dbFilename });
 
@@ -782,6 +935,42 @@ function runAudit(parsed: ParsedArgs): number {
   }
 }
 
+function runVerifyAudit(parsed: ParsedArgs): number {
+  const adapter = new SqliteAdapter({ filename: parsed.dbFilename });
+
+  try {
+    const request = adapter.getActionRequest(parsed.taskId!);
+
+    if (request === null) {
+      console.error(`Task not found: ${parsed.taskId}`);
+      return EXIT_NOT_FOUND;
+    }
+
+    const events = adapter.listAuditEvents(parsed.taskId!);
+    const result = verifyAuditChain(events);
+
+    console.log(`task_id: ${parsed.taskId}`);
+    console.log(`event_count: ${events.length}`);
+    console.log(`audit_valid: ${result.valid ? "true" : "false"}`);
+
+    if (!result.valid) {
+      for (const issue of result.issues) {
+        console.log(`issue: ${issue}`);
+      }
+
+      return EXIT_INTERNAL_ERROR;
+    }
+
+    return EXIT_SUCCESS;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    return EXIT_INTERNAL_ERROR;
+  } finally {
+    adapter.close();
+  }
+}
+
 function resolveDbFilename(): string {
   return process.env.ACP_DB_FILE || "acp.sqlite";
 }
@@ -794,9 +983,11 @@ function deriveApprovalStatus(state: string): string {
     case "executing":
     case "succeeded":
     case "failed":
-    case "handoff_required":
-    case "handoff_completed":
       return "approved";
+    case "handoff_required":
+      return "handoff_required";
+    case "handoff_completed":
+      return "handoff_completed";
     case "rejected":
       return "rejected";
     case "expired":
@@ -840,7 +1031,9 @@ function printHelp(): void {
   console.log("  acp approve <task-id> --approver <id> [--reason <code>] [--db <filename>]");
   console.log("  acp reject <task-id> --approver <id> --reason <code> [--db <filename>]");
   console.log("  acp handoff <task-id> --to <queue> --reason <code> [--db <filename>]");
+  console.log("  acp complete-handoff <task-id> --resolver <id> --summary <text> [--db <filename>]");
   console.log("  acp audit <task-id> [--db <filename>]");
+  console.log("  acp verify-audit <task-id> [--db <filename>]");
   console.log("");
   console.log("Environment:");
   console.log("  ACP_DB_FILE  Default SQLite filename");

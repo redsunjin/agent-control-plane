@@ -1,0 +1,19 @@
+{
+  "task_id": "demo-markdown-approval",
+  "action_id": "action-demo-markdown-approval",
+  "actor_id": "agent-1",
+  "tool": "local-file-tool",
+  "operation": "record_update",
+  "resource_type": "local_markdown",
+  "resource_id": "examples/local-record-update/resources/record.md",
+  "risk_level": "high",
+  "expected_effect": "replace the markdown record with approved content",
+  "payload": {
+    "content": "# Approved Record\n\nThis content was written after approval.\n"
+  },
+  "policy_context": {
+    "environment": "example"
+  },
+  "idempotency_key": "demo-markdown-approval-1",
+  "submitted_at": "2026-03-19T15:00:00.000Z"
+}
