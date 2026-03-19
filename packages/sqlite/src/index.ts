@@ -2,8 +2,11 @@ import { DatabaseSync } from "node:sqlite";
 
 import {
   type ActionRequest,
+  type ApprovalDecision,
   type AuditEventRecord,
   type JsonValue,
+  type PolicyDecision,
+  type HandoffTicket,
   type TaskState,
   verifyAuditEvent,
 } from "@agent-control-plane/core";
@@ -26,6 +29,36 @@ export interface CreateActionRequestInput {
   state: TaskState;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface CreatePolicyDecisionInput extends PolicyDecision {
+  policyDecisionId: string;
+  matchedRules: string[];
+}
+
+export interface PersistedPolicyDecision extends PolicyDecision {
+  policyDecisionId: string;
+  matchedRules: string[];
+}
+
+export interface CreateApprovalDecisionInput extends ApprovalDecision {
+  approvalDecisionId: string;
+  createdAt: string;
+}
+
+export interface PersistedApprovalDecision extends ApprovalDecision {
+  approvalDecisionId: string;
+  createdAt: string;
+}
+
+export interface CreateHandoffTicketInput extends HandoffTicket {
+  handoffTicketId: string;
+  closedAt?: string | null;
+}
+
+export interface PersistedHandoffTicket extends HandoffTicket {
+  handoffTicketId: string;
+  closedAt?: string | null;
 }
 
 type ActionRequestRow = {
@@ -64,6 +97,42 @@ type AuditEventRow = {
   event_hash: string;
 };
 
+type PolicyDecisionRow = {
+  policy_decision_id: string;
+  task_id: string;
+  policy_id: string;
+  policy_version: string;
+  decision: PolicyDecision["decision"];
+  reason_code: string;
+  evaluated_at: string;
+  matched_rules: string;
+};
+
+type ApprovalDecisionRow = {
+  approval_decision_id: string;
+  task_id: string;
+  action_schema_hash: string;
+  policy_id: string;
+  policy_version: string;
+  approver_id: string;
+  decision: ApprovalDecision["decision"];
+  decision_reason_code: string;
+  prior_decision_id: string | null;
+  expires_at: string;
+  created_at: string;
+};
+
+type HandoffTicketRow = {
+  handoff_ticket_id: string;
+  task_id: string;
+  handoff_reason: string;
+  required_context: string;
+  assigned_to: string | null;
+  status: HandoffTicket["status"];
+  created_at: string;
+  closed_at: string | null;
+};
+
 export class AuditIntegrityError extends Error {
   constructor(message: string) {
     super(message);
@@ -95,6 +164,19 @@ export class SqliteAdapter {
 
   close(): void {
     this.database.close();
+  }
+
+  runInTransaction<T>(callback: () => T): T {
+    this.database.exec("BEGIN");
+
+    try {
+      const result = callback();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   createActionRequest(input: CreateActionRequestInput): PersistedActionRequest {
@@ -321,6 +403,177 @@ export class SqliteAdapter {
     return rows.map(mapAuditEventRow);
   }
 
+  createPolicyDecision(
+    input: CreatePolicyDecisionInput,
+  ): PersistedPolicyDecision {
+    this.database
+      .prepare(`
+        INSERT INTO policy_decisions (
+          policy_decision_id,
+          task_id,
+          policy_id,
+          policy_version,
+          decision,
+          reason_code,
+          evaluated_at,
+          matched_rules
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.policyDecisionId,
+        input.taskId,
+        input.policyId,
+        input.policyVersion,
+        input.decision,
+        input.reasonCode,
+        input.evaluatedAt,
+        JSON.stringify(input.matchedRules),
+      );
+
+    return {
+      ...input,
+    };
+  }
+
+  getLatestPolicyDecision(taskId: string): PersistedPolicyDecision | null {
+    const row = this.database
+      .prepare(`
+        SELECT
+          policy_decision_id,
+          task_id,
+          policy_id,
+          policy_version,
+          decision,
+          reason_code,
+          evaluated_at,
+          matched_rules
+        FROM policy_decisions
+        WHERE task_id = ?
+        ORDER BY evaluated_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskId) as PolicyDecisionRow | undefined;
+
+    return row === undefined ? null : mapPolicyDecisionRow(row);
+  }
+
+  createApprovalDecision(
+    input: CreateApprovalDecisionInput,
+  ): PersistedApprovalDecision {
+    this.database
+      .prepare(`
+        INSERT INTO approval_decisions (
+          approval_decision_id,
+          task_id,
+          action_schema_hash,
+          policy_id,
+          policy_version,
+          approver_id,
+          decision,
+          decision_reason_code,
+          prior_decision_id,
+          expires_at,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.approvalDecisionId,
+        input.taskId,
+        input.actionSchemaHash,
+        input.policyId,
+        input.policyVersion,
+        input.approverId,
+        input.decision,
+        input.decisionReasonCode,
+        input.priorDecisionId,
+        input.expiresAt,
+        input.createdAt,
+      );
+
+    return {
+      ...input,
+    };
+  }
+
+  getLatestApprovalDecision(taskId: string): PersistedApprovalDecision | null {
+    const row = this.database
+      .prepare(`
+        SELECT
+          approval_decision_id,
+          task_id,
+          action_schema_hash,
+          policy_id,
+          policy_version,
+          approver_id,
+          decision,
+          decision_reason_code,
+          prior_decision_id,
+          expires_at,
+          created_at
+        FROM approval_decisions
+        WHERE task_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskId) as ApprovalDecisionRow | undefined;
+
+    return row === undefined ? null : mapApprovalDecisionRow(row);
+  }
+
+  createHandoffTicket(
+    input: CreateHandoffTicketInput,
+  ): PersistedHandoffTicket {
+    this.database
+      .prepare(`
+        INSERT INTO handoff_tickets (
+          handoff_ticket_id,
+          task_id,
+          handoff_reason,
+          required_context,
+          assigned_to,
+          status,
+          created_at,
+          closed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        input.handoffTicketId,
+        input.taskId,
+        input.handoffReason,
+        serializeJson(input.requiredContext),
+        input.assignedTo,
+        input.status,
+        input.createdAt,
+        input.closedAt ?? null,
+      );
+
+    return {
+      ...input,
+    };
+  }
+
+  getLatestHandoffTicket(taskId: string): PersistedHandoffTicket | null {
+    const row = this.database
+      .prepare(`
+        SELECT
+          handoff_ticket_id,
+          task_id,
+          handoff_reason,
+          required_context,
+          assigned_to,
+          status,
+          created_at,
+          closed_at
+        FROM handoff_tickets
+        WHERE task_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(taskId) as HandoffTicketRow | undefined;
+
+    return row === undefined ? null : mapHandoffTicketRow(row);
+  }
+
   private getLatestAuditEvent(taskId: string): AuditEventRecord | null {
     const row = this.database
       .prepare(`
@@ -389,6 +642,51 @@ function mapAuditEventRow(row: AuditEventRow): AuditEventRecord {
     payloadHash: row.payload_hash,
     prevEventHash: row.prev_event_hash ?? undefined,
     eventHash: row.event_hash,
+  };
+}
+
+function mapPolicyDecisionRow(row: PolicyDecisionRow): PersistedPolicyDecision {
+  return {
+    policyDecisionId: row.policy_decision_id,
+    taskId: row.task_id,
+    policyId: row.policy_id,
+    policyVersion: row.policy_version,
+    decision: row.decision,
+    reasonCode: row.reason_code,
+    evaluatedAt: row.evaluated_at,
+    matchedRules: JSON.parse(row.matched_rules) as string[],
+  };
+}
+
+function mapApprovalDecisionRow(
+  row: ApprovalDecisionRow,
+): PersistedApprovalDecision {
+  return {
+    approvalDecisionId: row.approval_decision_id,
+    taskId: row.task_id,
+    actionSchemaHash: row.action_schema_hash,
+    policyId: row.policy_id,
+    policyVersion: row.policy_version,
+    approverId: row.approver_id,
+    decision: row.decision,
+    decisionReasonCode: row.decision_reason_code,
+    priorDecisionId: row.prior_decision_id,
+    timestamp: row.created_at,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+  };
+}
+
+function mapHandoffTicketRow(row: HandoffTicketRow): PersistedHandoffTicket {
+  return {
+    handoffTicketId: row.handoff_ticket_id,
+    taskId: row.task_id,
+    handoffReason: row.handoff_reason,
+    requiredContext: parseJson(row.required_context),
+    assignedTo: row.assigned_to,
+    status: row.status,
+    createdAt: row.created_at,
+    closedAt: row.closed_at,
   };
 }
 

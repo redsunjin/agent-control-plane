@@ -47,6 +47,54 @@ CREATE INDEX IF NOT EXISTS idx_action_requests_state_created_at
 CREATE INDEX IF NOT EXISTS idx_action_requests_resource
   ON action_requests (resource_type, resource_id);
 
+CREATE TABLE IF NOT EXISTS policy_decisions (
+  policy_decision_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  policy_id TEXT NOT NULL,
+  policy_version TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  evaluated_at TEXT NOT NULL,
+  matched_rules TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES action_requests (task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policy_decisions_task_id_evaluated_at
+  ON policy_decisions (task_id, evaluated_at);
+
+CREATE TABLE IF NOT EXISTS approval_decisions (
+  approval_decision_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  action_schema_hash TEXT NOT NULL,
+  policy_id TEXT NOT NULL,
+  policy_version TEXT NOT NULL,
+  approver_id TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  decision_reason_code TEXT NOT NULL,
+  prior_decision_id TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES action_requests (task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_decisions_task_id_created_at
+  ON approval_decisions (task_id, created_at);
+
+CREATE TABLE IF NOT EXISTS handoff_tickets (
+  handoff_ticket_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  handoff_reason TEXT NOT NULL,
+  required_context TEXT NOT NULL,
+  assigned_to TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  closed_at TEXT,
+  FOREIGN KEY (task_id) REFERENCES action_requests (task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_handoff_tickets_status_created_at
+  ON handoff_tickets (status, created_at);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   event_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,

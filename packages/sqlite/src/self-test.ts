@@ -1,4 +1,10 @@
-import { createAuditEvent, verifyAuditChain, type ActionRequest } from "@agent-control-plane/core";
+import {
+  createActionSchemaHash,
+  createAuditEvent,
+  evaluatePolicy,
+  verifyAuditChain,
+  type ActionRequest,
+} from "@agent-control-plane/core";
 
 import {
   AuditIntegrityError,
@@ -153,9 +159,76 @@ function testAuditAppendAndRead(): void {
   adapter.close();
 }
 
+function testPolicyApprovalAndHandoffPersistence(): void {
+  const adapter = new SqliteAdapter({ filename: ":memory:" });
+  const request = buildRequest("task-3");
+
+  adapter.runInTransaction(() => {
+    adapter.createActionRequest({
+      request,
+      state: "approval_required",
+    });
+
+    const policyDecision = evaluatePolicy({ request });
+
+    adapter.createPolicyDecision({
+      policyDecisionId: "pol-1",
+      ...policyDecision,
+      matchedRules: policyDecision.matchedRules,
+    });
+
+    adapter.createApprovalDecision({
+      approvalDecisionId: "app-1",
+      taskId: request.taskId,
+      actionSchemaHash: createActionSchemaHash(request),
+      policyId: policyDecision.policyId,
+      policyVersion: policyDecision.policyVersion,
+      approverId: "alice",
+      decision: "approved",
+      decisionReasonCode: "manual_review",
+      timestamp: "2026-03-19T12:02:00.000Z",
+      expiresAt: "2026-03-19T13:02:00.000Z",
+      priorDecisionId: null,
+      createdAt: "2026-03-19T12:02:00.000Z",
+    });
+
+    adapter.createHandoffTicket({
+      handoffTicketId: "ho-1",
+      taskId: request.taskId,
+      handoffReason: "missing_context",
+      requiredContext: {
+        queue: "ops-queue",
+      },
+      assignedTo: "ops-queue",
+      status: "open",
+      createdAt: "2026-03-19T12:03:00.000Z",
+    });
+  });
+
+  const latestPolicyDecision = adapter.getLatestPolicyDecision(request.taskId);
+  const latestApprovalDecision = adapter.getLatestApprovalDecision(request.taskId);
+  const latestHandoffTicket = adapter.getLatestHandoffTicket(request.taskId);
+
+  assert(
+    latestPolicyDecision?.decision === "approval_required",
+    "latest policy decision should be retrievable",
+  );
+  assert(
+    latestApprovalDecision?.decision === "approved",
+    "latest approval decision should be retrievable",
+  );
+  assert(
+    latestHandoffTicket?.assignedTo === "ops-queue",
+    "latest handoff ticket should be retrievable",
+  );
+
+  adapter.close();
+}
+
 function run(): void {
   testActionRequestLifecycle();
   testAuditAppendAndRead();
+  testPolicyApprovalAndHandoffPersistence();
   console.log("packages/sqlite self-test passed");
 }
 

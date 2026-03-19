@@ -37,6 +37,7 @@ Required columns:
 - `decision` `TEXT NOT NULL`
 - `reason_code` `TEXT NOT NULL`
 - `evaluated_at` `TEXT NOT NULL`
+- `matched_rules` `TEXT NOT NULL`
 
 ### `approval_decisions`
 Stores human approvals and rejections.
