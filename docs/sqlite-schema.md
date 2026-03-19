@@ -91,9 +91,16 @@ Required columns:
 - `actor_type` `TEXT NOT NULL`
 - `actor_id` `TEXT NOT NULL`
 - `timestamp` `TEXT NOT NULL`
+- `payload` `TEXT NOT NULL`
+- `schema_version` `TEXT NOT NULL`
 - `payload_hash` `TEXT NOT NULL`
 - `prev_event_hash` `TEXT`
 - `event_hash` `TEXT NOT NULL`
+
+Recommended optional columns:
+- `correlation_id` `TEXT`
+- `idempotency_key` `TEXT`
+- `source` `TEXT`
 
 ## Constraints
 ### Shared Constraints
@@ -102,6 +109,7 @@ Required columns:
 - `approval_required` and `handoff_required` remain distinct values in `action_requests.state`
 - `audit_events` are never updated or deleted
 - `decision`, `status`, `state`, and `risk_level` should use closed value sets rather than free text
+- `audit_events.payload` should store canonical JSON text for later inspection and hash verification
 
 ### Recommended CHECK Constraints
 ```sql
