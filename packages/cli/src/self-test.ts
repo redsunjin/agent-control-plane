@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -177,6 +177,14 @@ function testSubmitApproveRejectAndHandoff(): void {
   assert(approve.status === 0, `approve should succeed: ${approve.stderr}`);
   assert(approve.stdout.includes("approval_decision: approved"), "approve should record approval");
 
+  const execute = spawnSync(
+    process.execPath,
+    ["dist/index.js", "execute", "task-write-1", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(execute.status === 4, "execute should fail for missing local_markdown payload.content");
+
   const denyRequestFile = join(tempDir, "deny-request.yaml");
   writeFileSync(
     denyRequestFile,
@@ -301,6 +309,58 @@ function testSubmitApproveRejectAndHandoff(): void {
   );
 
   assert(reject.status === 3, "reject should return exit code 3");
+
+  const executeRequestFile = join(tempDir, "execute-request.json");
+  const executeTargetFile = join(tempDir, "record.md");
+  writeFileSync(
+    executeRequestFile,
+    JSON.stringify({
+      task_id: "task-write-5",
+      action_id: "action-write-5",
+      actor_id: "agent-1",
+      tool: "local-file-tool",
+      operation: "record_update",
+      resource_type: "local_markdown",
+      resource_id: executeTargetFile,
+      risk_level: "high",
+      expected_effect: "write approved markdown content",
+      payload: { content: "# Approved Record\n\nHello world.\n" },
+      policy_context: { environment: "test" },
+      idempotency_key: "idem-write-5",
+      submitted_at: "2026-03-19T13:14:00.000Z",
+    }),
+  );
+
+  spawnSync(
+    process.execPath,
+    ["dist/index.js", "submit", executeRequestFile, "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+  spawnSync(
+    process.execPath,
+    [
+      "dist/index.js",
+      "approve",
+      "task-write-5",
+      "--approver",
+      "alice",
+      "--db",
+      dbFilename,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  const executeSuccess = spawnSync(
+    process.execPath,
+    ["dist/index.js", "execute", "task-write-5", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(executeSuccess.status === 0, `execute should succeed: ${executeSuccess.stderr}`);
+  assert(
+    readFileSync(executeTargetFile, "utf8").includes("Approved Record"),
+    "execute should update the local record file",
+  );
 
   rmSync(tempDir, { recursive: true, force: true });
 }

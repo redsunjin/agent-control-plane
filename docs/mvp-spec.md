@@ -215,6 +215,7 @@ Recommended commands:
 acp submit action-request.json
 acp inspect TASK_ID
 acp approve TASK_ID --approver alice
+acp execute TASK_ID
 acp reject TASK_ID --approver alice --reason policy_violation
 acp handoff TASK_ID --to ops-queue --reason missing_context
 acp audit TASK_ID

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import {
@@ -26,6 +26,7 @@ const EXIT_INTERNAL_ERROR = 4;
 type CliCommand =
   | "submit"
   | "inspect"
+  | "execute"
   | "approve"
   | "reject"
   | "handoff"
@@ -56,6 +57,8 @@ function main(argv: readonly string[]): number {
         return runSubmit(parsed);
       case "approve":
         return runApprove(parsed);
+      case "execute":
+        return runExecute(parsed);
       case "reject":
         return runReject(parsed);
       case "handoff":
@@ -83,6 +86,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   if (
     command !== "submit" &&
     command !== "inspect" &&
+    command !== "execute" &&
     command !== "approve" &&
     command !== "reject" &&
     command !== "handoff" &&
@@ -222,6 +226,7 @@ function runInspect(parsed: ParsedArgs): number {
     const latestPolicyDecision = adapter.getLatestPolicyDecision(parsed.taskId!);
     const latestApprovalDecision = adapter.getLatestApprovalDecision(parsed.taskId!);
     const latestHandoffTicket = adapter.getLatestHandoffTicket(parsed.taskId!);
+    const latestExecutionResult = adapter.getLatestExecutionResult(parsed.taskId!);
 
     console.log(`task_id: ${request.taskId}`);
     console.log(`state: ${request.state}`);
@@ -235,13 +240,162 @@ function runInspect(parsed: ParsedArgs): number {
     console.log(
       `approval_status: ${latestApprovalDecision?.decision ?? deriveApprovalStatus(request.state)}`,
     );
-    console.log(`execution_status: ${deriveExecutionStatus(request.state)}`);
+    console.log(
+      `execution_status: ${latestExecutionResult?.status ?? deriveExecutionStatus(request.state)}`,
+    );
+    console.log(
+      `execution_summary: ${latestExecutionResult?.resultSummary ?? "not_recorded"}`,
+    );
     console.log(
       `handoff_status: ${latestHandoffTicket?.status ?? deriveHandoffStatus(request.state)}`,
     );
     console.log(`audit_event_count: ${auditEvents.length}`);
     console.log(`latest_audit_event: ${latestAuditEvent?.eventType ?? "none"}`);
 
+    return EXIT_SUCCESS;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    return EXIT_INTERNAL_ERROR;
+  } finally {
+    adapter.close();
+  }
+}
+
+function runExecute(parsed: ParsedArgs): number {
+  const adapter = new SqliteAdapter({ filename: parsed.dbFilename });
+
+  try {
+    const request = adapter.getActionRequest(parsed.taskId!);
+
+    if (request === null) {
+      console.error(`Task not found: ${parsed.taskId}`);
+      return EXIT_NOT_FOUND;
+    }
+
+    if (request.state !== "approved") {
+      console.error(`Task ${request.taskId} is not ready for execution`);
+      return EXIT_INVALID_INPUT;
+    }
+
+    const startedAt = new Date().toISOString();
+    const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+    const executionId = `${request.taskId}:execution`;
+    const executionStartedEvent = createAuditEvent({
+      eventId: `${request.taskId}:execution.started`,
+      taskId: request.taskId,
+      eventType: "execution.started",
+      state: "executing",
+      actorType: "executor",
+      actorId: "local-record-update",
+      occurredAt: startedAt,
+      prevEventHash: latestAuditEvent?.eventHash,
+      payload: {
+        executionId,
+        resourceType: request.resourceType,
+        resourceId: request.resourceId,
+      },
+    });
+
+    adapter.runInTransaction(() => {
+      assertTransitionTaskState(request.state, "executing");
+      adapter.updateActionRequestState(request.taskId, "executing", startedAt);
+      adapter.appendAuditEvent(executionStartedEvent);
+    });
+
+    let originalContents: string | undefined;
+    const hadOriginalFile = existsSync(request.resourceId);
+
+    if (hadOriginalFile) {
+      originalContents = readFileSync(request.resourceId, "utf8");
+    }
+
+    try {
+      const writeResult = applyLocalRecordUpdate(request);
+      const completedAt = new Date().toISOString();
+
+      adapter.runInTransaction(() => {
+        adapter.createExecutionResult({
+          executionResultId: `${request.taskId}:execution-result`,
+          taskId: request.taskId,
+          executionId,
+          status: "succeeded",
+          resultSummary: writeResult.summary,
+          executorId: "local-record-update",
+          startedAt,
+          finishedAt: completedAt,
+        });
+        assertTransitionTaskState("executing", "succeeded");
+        adapter.updateActionRequestState(request.taskId, "succeeded", completedAt);
+        adapter.appendAuditEvent(
+          createAuditEvent({
+            eventId: `${request.taskId}:execution.completed`,
+            taskId: request.taskId,
+            eventType: "execution.completed",
+            state: "succeeded",
+            actorType: "executor",
+            actorId: "local-record-update",
+            occurredAt: completedAt,
+            prevEventHash: executionStartedEvent.eventHash,
+            payload: {
+              executionId,
+              status: "succeeded",
+              resultSummary: writeResult.summary,
+            },
+          }),
+        );
+      });
+    } catch (error) {
+      restoreOriginalFile(request.resourceId, originalContents, hadOriginalFile);
+
+      const failureAt = new Date().toISOString();
+      const failureSummary =
+        error instanceof Error ? error.message : String(error);
+
+      try {
+        adapter.runInTransaction(() => {
+          adapter.createExecutionResult({
+            executionResultId: `${request.taskId}:execution-result:failed`,
+            taskId: request.taskId,
+            executionId,
+            status: "failed",
+            resultSummary: failureSummary,
+            executorId: "local-record-update",
+            startedAt,
+            finishedAt: failureAt,
+          });
+          assertTransitionTaskState("executing", "failed");
+          adapter.updateActionRequestState(request.taskId, "failed", failureAt);
+          adapter.appendAuditEvent(
+            createAuditEvent({
+              eventId: `${request.taskId}:execution.completed:failed`,
+              taskId: request.taskId,
+              eventType: "execution.completed",
+              state: "failed",
+              actorType: "executor",
+              actorId: "local-record-update",
+              occurredAt: failureAt,
+              prevEventHash: executionStartedEvent.eventHash,
+              payload: {
+                executionId,
+                status: "failed",
+                resultSummary: failureSummary,
+              },
+            }),
+          );
+        });
+      } catch {
+        // Preserve fail-closed behavior by surfacing the execution error after best-effort recording.
+      }
+
+      console.error(failureSummary);
+      return EXIT_INTERNAL_ERROR;
+    }
+
+    console.log(`task_id: ${request.taskId}`);
+    console.log(`state: succeeded`);
+    console.log(`execution_id: ${executionId}`);
+    console.log(`executor_id: local-record-update`);
     return EXIT_SUCCESS;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -682,6 +836,7 @@ function printHelp(): void {
   console.log("Usage:");
   console.log("  acp submit <request-file> [--db <filename>]");
   console.log("  acp inspect <task-id> [--db <filename>]");
+  console.log("  acp execute <task-id> [--db <filename>]");
   console.log("  acp approve <task-id> --approver <id> [--reason <code>] [--db <filename>]");
   console.log("  acp reject <task-id> --approver <id> --reason <code> [--db <filename>]");
   console.log("  acp handoff <task-id> --to <queue> --reason <code> [--db <filename>]");
@@ -793,6 +948,8 @@ function suggestNextCommand(state: string, taskId: string): string {
   switch (state) {
     case "approval_required":
       return `acp approve ${taskId} --approver <id>`;
+    case "approved":
+      return `acp execute ${taskId}`;
     case "rejected":
       return `acp audit ${taskId}`;
     case "handoff_required":
@@ -800,6 +957,62 @@ function suggestNextCommand(state: string, taskId: string): string {
     default:
       return `acp inspect ${taskId}`;
   }
+}
+
+function applyLocalRecordUpdate(request: ActionRequest): { summary: string } {
+  mkdirSync(dirnameOf(request.resourceId), { recursive: true });
+
+  if (request.resourceType === "local_markdown") {
+    if (
+      typeof request.payload !== "object" ||
+      request.payload === null ||
+      Array.isArray(request.payload) ||
+      typeof request.payload.content !== "string"
+    ) {
+      throw new Error("local_markdown execution requires payload.content");
+    }
+
+    writeFileSync(request.resourceId, request.payload.content, "utf8");
+    return { summary: `wrote markdown file ${request.resourceId}` };
+  }
+
+  if (request.resourceType === "local_json") {
+    if (
+      typeof request.payload !== "object" ||
+      request.payload === null ||
+      Array.isArray(request.payload) ||
+      !("document" in request.payload)
+    ) {
+      throw new Error("local_json execution requires payload.document");
+    }
+
+    writeFileSync(
+      request.resourceId,
+      `${JSON.stringify(request.payload.document, null, 2)}\n`,
+      "utf8",
+    );
+    return { summary: `wrote json file ${request.resourceId}` };
+  }
+
+  throw new Error(`unsupported executor resource_type: ${request.resourceType}`);
+}
+
+function restoreOriginalFile(
+  filename: string,
+  originalContents: string | undefined,
+  hadOriginalFile: boolean,
+): void {
+  if (!hadOriginalFile) {
+    rmSync(filename, { force: true });
+    return;
+  }
+
+  writeFileSync(filename, originalContents ?? "", "utf8");
+}
+
+function dirnameOf(pathname: string): string {
+  const lastSlash = pathname.lastIndexOf("/");
+  return lastSlash <= 0 ? "." : pathname.slice(0, lastSlash);
 }
 
 process.exitCode = main(process.argv.slice(2));

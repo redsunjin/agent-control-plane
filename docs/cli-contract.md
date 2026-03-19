@@ -74,6 +74,21 @@ Behavior:
 - store the approval decision
 - move the task into an executable state
 
+### `acp execute <task-id>`
+Execute an approved local `record_update` request.
+
+Example:
+```bash
+acp execute T-1001
+```
+
+Behavior:
+- verify the task is in `approved`
+- execute the local file update for the supported resource type
+- record `execution.started` and `execution.completed`
+- persist the execution result
+- move the task to `succeeded` or `failed`
+
 ### `acp reject <task-id> --approver <id> --reason <code>`
 Reject a request that is waiting for human approval.
 
@@ -125,6 +140,7 @@ Rules:
 - required field missing
 - unknown field or schema drift routes the request to `handoff_required`
 - `approve` called from an invalid state
+- `execute` called from an invalid state
 - approval attempted after a request is already approved
 - expired approval artifact
 - payload changed after approval
@@ -137,12 +153,14 @@ Rules:
 acp submit action-request.json
 acp inspect T-1001
 acp approve T-1001 --approver alice
+acp execute T-1001
 acp audit T-1001
 ```
 
 Expected result:
 - `submit` ends in `approval_required`
-- `approve` moves the task to `approved` or `executing`
+- `approve` moves the task to `approved`
+- `execute` moves the task to `succeeded` or `failed`
 - `audit` reconstructs the full event sequence
 
 ### 2. Policy Denial Path
@@ -171,4 +189,5 @@ Expected result:
 - `submit` should support only `record_update` in the MVP
 - `inspect` and `audit` are the easiest read-only commands and should ship first
 - `approve` and `reject` must strongly validate state transitions
+- `execute` is the local demo helper for the MVP
 - the first `record_update` executor should update local files only
