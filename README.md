@@ -32,6 +32,13 @@ Canonical project docs now live in [`docs/`](./docs):
 
 These documents were adapted from the ideation workspace and are now the local source of truth for implementation in this repository.
 
+Project-level documents:
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- [`CHANGELOG.md`](./CHANGELOG.md)
+- [`SECURITY.md`](./SECURITY.md)
+- [`LICENSE`](./LICENSE)
+
 ## Current Status
 The MVP path is implemented locally:
 - `submit -> inspect -> approve -> execute -> verify-audit -> audit`
@@ -67,3 +74,7 @@ npm test
 
 ## Runtime Note
 The current SQLite adapter uses Node's `node:sqlite` module, which still emits an experimental warning on current Node releases.
+
+## Release Note
+The repository is ready for public source release.
+Package publishing is not configured yet. `package.json` is still marked `private` until a release policy is chosen.

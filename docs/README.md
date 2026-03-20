@@ -31,3 +31,11 @@ This directory contains the local planning and contract documents for the reposi
 ## Source Notes
 These docs were adapted from the ideation documents in `/Users/Agent/ps-workspace/dunkin/ideas/projects/agent-control-plane/`.
 The copies in this repository should be treated as the implementation baseline going forward.
+
+## Related Root Documents
+- `README.md`
+- `ARCHITECTURE.md`
+- `CONTRIBUTING.md`
+- `CHANGELOG.md`
+- `SECURITY.md`
+- `LICENSE`
