@@ -9,6 +9,7 @@ This directory contains the local planning and contract documents for the reposi
 4. [CLI Contract](./cli-contract.md)
 5. [Implementation Plan](./implementation-plan.md)
 6. [Test Plan](./test-plan.md)
+7. [Retrospective](./retrospective.md)
 
 ## Repository Map
 - `packages/core`
