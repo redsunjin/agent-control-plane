@@ -81,6 +81,7 @@ Allowed transitions:
 - `policy_evaluating -> handoff_required`
 - `approved -> executing`
 - `approved -> handoff_required`
+- `approved -> expired`
 - `executing -> succeeded`
 - `executing -> failed`
 - `approval_required -> approved`

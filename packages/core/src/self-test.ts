@@ -28,6 +28,7 @@ function testStateMachine(): void {
 
   assertTransitionTaskState("approval_required", "approved");
   assertTransitionTaskState("approved", "handoff_required");
+  assertTransitionTaskState("approved", "expired");
 
   let threw = false;
 

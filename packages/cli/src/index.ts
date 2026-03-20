@@ -330,50 +330,96 @@ function runExecute(parsed: ParsedArgs): number {
     const latestApprovalDecision = adapter.getLatestApprovalDecision(request.taskId);
     const currentActionSchemaHash = createActionSchemaHash(request);
 
-    if (
-      latestApprovalDecision !== null &&
-      latestApprovalDecision.actionSchemaHash !== currentActionSchemaHash
-    ) {
-      const mismatchAt = new Date().toISOString();
-      const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+    if (latestApprovalDecision !== null) {
+      const expiresAt = Date.parse(latestApprovalDecision.expiresAt);
 
-      adapter.runInTransaction(() => {
-        assertTransitionTaskState(request.state, "handoff_required");
-        adapter.updateActionRequestState(request.taskId, "handoff_required", mismatchAt);
-        adapter.createHandoffTicket({
-          handoffTicketId: `${request.taskId}:handoff:approval-mismatch`,
-          taskId: request.taskId,
-          handoffReason: "approval_payload_mismatch",
-          requiredContext: {
-            expectedActionSchemaHash: latestApprovalDecision.actionSchemaHash,
-            actualActionSchemaHash: currentActionSchemaHash,
-          },
-          assignedTo: "ops-queue",
-          status: "open",
-          createdAt: mismatchAt,
-        });
-        adapter.appendAuditEvent(
-          createAuditEvent({
-            eventId: `${request.taskId}:handoff.requested:approval-mismatch`,
+      if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) {
+        const expiredAt = new Date().toISOString();
+        const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+
+        adapter.runInTransaction(() => {
+          adapter.createApprovalDecision({
+            approvalDecisionId: `${request.taskId}:approval:expired`,
             taskId: request.taskId,
-            eventType: "handoff.requested",
-            state: "handoff_required",
-            actorType: "system",
-            actorId: "approval-guard",
-            occurredAt: mismatchAt,
-            prevEventHash: latestAuditEvent?.eventHash,
-            payload: {
-              handoffReason: "approval_payload_mismatch",
-              assignedTo: "ops-queue",
-            },
-          }),
-        );
-      });
+            actionSchemaHash: latestApprovalDecision.actionSchemaHash,
+            policyId: latestApprovalDecision.policyId,
+            policyVersion: latestApprovalDecision.policyVersion,
+            approverId: "approval-guard",
+            decision: "expired",
+            decisionReasonCode: "approval_expired",
+            timestamp: expiredAt,
+            expiresAt: latestApprovalDecision.expiresAt,
+            priorDecisionId: latestApprovalDecision.approvalDecisionId,
+            createdAt: expiredAt,
+          });
+          assertTransitionTaskState(request.state, "expired");
+          adapter.updateActionRequestState(request.taskId, "expired", expiredAt);
+          adapter.appendAuditEvent(
+            createAuditEvent({
+              eventId: `${request.taskId}:approval.decided:expired`,
+              taskId: request.taskId,
+              eventType: "approval.decided",
+              state: "expired",
+              actorType: "system",
+              actorId: "approval-guard",
+              occurredAt: expiredAt,
+              prevEventHash: latestAuditEvent?.eventHash,
+              payload: {
+                decision: "expired",
+                decisionReasonCode: "approval_expired",
+                actionSchemaHash: latestApprovalDecision.actionSchemaHash,
+                originalExpiresAt: latestApprovalDecision.expiresAt,
+              },
+            }),
+          );
+        });
 
-      console.error(
-        `approval-bound action hash mismatch for task ${request.taskId}; task moved to handoff_required`,
-      );
-      return EXIT_INTERNAL_ERROR;
+        console.error(`approval artifact expired for task ${request.taskId}`);
+        return EXIT_INVALID_INPUT;
+      }
+
+      if (latestApprovalDecision.actionSchemaHash !== currentActionSchemaHash) {
+        const mismatchAt = new Date().toISOString();
+        const latestAuditEvent = adapter.listAuditEvents(request.taskId).at(-1);
+
+        adapter.runInTransaction(() => {
+          assertTransitionTaskState(request.state, "handoff_required");
+          adapter.updateActionRequestState(request.taskId, "handoff_required", mismatchAt);
+          adapter.createHandoffTicket({
+            handoffTicketId: `${request.taskId}:handoff:approval-mismatch`,
+            taskId: request.taskId,
+            handoffReason: "approval_payload_mismatch",
+            requiredContext: {
+              expectedActionSchemaHash: latestApprovalDecision.actionSchemaHash,
+              actualActionSchemaHash: currentActionSchemaHash,
+            },
+            assignedTo: "ops-queue",
+            status: "open",
+            createdAt: mismatchAt,
+          });
+          adapter.appendAuditEvent(
+            createAuditEvent({
+              eventId: `${request.taskId}:handoff.requested:approval-mismatch`,
+              taskId: request.taskId,
+              eventType: "handoff.requested",
+              state: "handoff_required",
+              actorType: "system",
+              actorId: "approval-guard",
+              occurredAt: mismatchAt,
+              prevEventHash: latestAuditEvent?.eventHash,
+              payload: {
+                handoffReason: "approval_payload_mismatch",
+                assignedTo: "ops-queue",
+              },
+            }),
+          );
+        });
+
+        console.error(
+          `approval-bound action hash mismatch for task ${request.taskId}; task moved to handoff_required`,
+        );
+        return EXIT_INTERNAL_ERROR;
+      }
     }
 
     const startedAt = new Date().toISOString();
@@ -506,9 +552,18 @@ function runExecute(parsed: ParsedArgs): number {
 
 function runSubmit(parsed: ParsedArgs): number {
   const adapter = new SqliteAdapter({ filename: parsed.dbFilename });
+  let loadedRequest: ReturnType<typeof loadActionRequest>;
 
   try {
-    const { request, unknownFields } = loadActionRequest(parsed.requestFile!);
+    loadedRequest = loadActionRequest(parsed.requestFile!);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    return EXIT_INVALID_INPUT;
+  }
+
+  try {
+    const { request, unknownFields } = loadedRequest;
     const policyDecision = evaluatePolicy({
       request,
       hasUnknownFields: unknownFields.length > 0,

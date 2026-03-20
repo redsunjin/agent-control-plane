@@ -74,11 +74,13 @@ Primary payload:
 Decision values:
 - `approved`
 - `rejected`
+- `expired`
 
 State transitions:
 - `approval_required -> approved`
 - `approval_required -> rejected`
 - `approval_required -> expired`
+- `approved -> expired`
 
 ### 5. `execution.started`
 Emitted when an approved request begins execution.
@@ -183,11 +185,12 @@ Recommended flow:
 5. `policy.decision=approval_required` -> `approval_required`
 6. `policy.decision=handoff_required` -> `handoff_required`
 7. `approval.decided=approved` -> `approved`
-8. `execution.started` -> `executing`
-9. `execution.completed=success` -> `succeeded`
-10. `execution.completed=failure` -> `failed`
-11. `handoff.requested` -> `handoff_required`
-12. `handoff.completed` -> `handoff_completed`
+8. `approval.decided=expired` -> `expired`
+9. `execution.started` -> `executing`
+10. `execution.completed=success` -> `succeeded`
+11. `execution.completed=failure` -> `failed`
+12. `handoff.requested` -> `handoff_required`
+13. `handoff.completed` -> `handoff_completed`
 
 Principles:
 - policy `allow` promotes the request directly into an executable `approved` state

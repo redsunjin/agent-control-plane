@@ -141,6 +141,22 @@ function testSubmitApproveRejectAndHandoff(): void {
   const tempDir = mkdtempSync(join(tmpdir(), "acp-cli-write-"));
   const dbFilename = join(tempDir, "acp.sqlite");
 
+  const invalidRequestFile = join(tempDir, "invalid-request.json");
+  writeFileSync(
+    invalidRequestFile,
+    JSON.stringify({
+      task_id: "task-invalid-1",
+    }),
+  );
+
+  const invalidSubmit = spawnSync(
+    process.execPath,
+    ["dist/index.js", "submit", invalidRequestFile, "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(invalidSubmit.status === 1, "submit should return 1 for malformed request files");
+
   const approvalRequestFile = join(tempDir, "approval-request.json");
   writeFileSync(
     approvalRequestFile,
@@ -493,6 +509,72 @@ function testSubmitApproveRejectAndHandoff(): void {
   assert(
     inspectCompleted.stdout.includes("state: handoff_completed"),
     "complete-handoff should move task to handoff_completed",
+  );
+
+  const expiredRequestFile = join(tempDir, "expired-request.json");
+  const expiredTargetFile = join(tempDir, "expired-record.md");
+  writeFileSync(
+    expiredRequestFile,
+    JSON.stringify({
+      task_id: "task-write-7",
+      action_id: "action-write-7",
+      actor_id: "agent-1",
+      tool: "local-file-tool",
+      operation: "record_update",
+      resource_type: "local_markdown",
+      resource_id: expiredTargetFile,
+      risk_level: "high",
+      expected_effect: "write approved markdown content",
+      payload: { content: "# Expired Approval\n" },
+      policy_context: { environment: "test" },
+      idempotency_key: "idem-write-7",
+      submitted_at: "2026-03-19T13:16:00.000Z",
+    }),
+  );
+
+  spawnSync(
+    process.execPath,
+    ["dist/index.js", "submit", expiredRequestFile, "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+  spawnSync(
+    process.execPath,
+    [
+      "dist/index.js",
+      "approve",
+      "task-write-7",
+      "--approver",
+      "alice",
+      "--db",
+      dbFilename,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  const expiredDb = new DatabaseSync(dbFilename);
+  expiredDb.prepare(
+    "UPDATE approval_decisions SET expires_at = ? WHERE task_id = ?",
+  ).run("2000-01-01T00:00:00.000Z", "task-write-7");
+  expiredDb.close();
+
+  const executeExpired = spawnSync(
+    process.execPath,
+    ["dist/index.js", "execute", "task-write-7", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(executeExpired.status === 1, "execute should return 1 for expired approval artifacts");
+
+  const inspectExpired = spawnSync(
+    process.execPath,
+    ["dist/index.js", "inspect", "task-write-7", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(inspectExpired.stdout.includes("state: expired"), "expired approval should move task to expired");
+  assert(
+    inspectExpired.stdout.includes("approval_status: expired"),
+    "inspect should report expired approval status",
   );
 
   rmSync(tempDir, { recursive: true, force: true });
