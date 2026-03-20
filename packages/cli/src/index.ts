@@ -1039,12 +1039,6 @@ function deriveApprovalStatus(state: string): string {
     case "succeeded":
     case "failed":
       return "approved";
-    case "handoff_required":
-      return "handoff_required";
-    case "handoff_completed":
-      return "handoff_completed";
-    case "rejected":
-      return "rejected";
     case "expired":
       return "expired";
     default:
@@ -1059,9 +1053,7 @@ function deriveExecutionStatus(state: string): string {
     case "succeeded":
       return "succeeded";
     case "failed":
-    case "handoff_required":
-    case "handoff_completed":
-      return "failed_or_handoff";
+      return "failed";
     default:
       return "not_recorded";
   }

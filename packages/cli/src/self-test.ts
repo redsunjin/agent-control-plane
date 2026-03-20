@@ -260,6 +260,17 @@ function testSubmitApproveRejectAndHandoff(): void {
 
   assert(deniedSubmit.status === 3, "policy denial should return exit code 3");
 
+  const deniedInspect = spawnSync(
+    process.execPath,
+    ["dist/index.js", "inspect", "task-write-2", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(
+    deniedInspect.stdout.includes("approval_status: not_recorded"),
+    "policy denial should not be reported as an approval rejection",
+  );
+
   const handoffRequestFile = join(tempDir, "handoff-request.json");
   writeFileSync(
     handoffRequestFile,
@@ -310,6 +321,17 @@ function testSubmitApproveRejectAndHandoff(): void {
 
   assert(handoff.status === 0, `handoff should succeed: ${handoff.stderr}`);
   assert(handoff.stdout.includes("assigned_to: ops-queue"), "handoff should create a ticket");
+
+  const inspectHandoffOpen = spawnSync(
+    process.execPath,
+    ["dist/index.js", "inspect", "task-write-3", "--db", dbFilename],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(
+    inspectHandoffOpen.stdout.includes("execution_status: not_recorded"),
+    "handoff-only tasks should not be reported as execution failures",
+  );
 
   const rejectRequestFile = join(tempDir, "reject-request.json");
   writeFileSync(
