@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
@@ -205,6 +205,22 @@ function testSubmitApproveRejectAndHandoff(): void {
 
   assert(approve.status === 0, `approve should succeed: ${approve.stderr}`);
   assert(approve.stdout.includes("approval_decision: approved"), "approve should record approval");
+
+  const reapprove = spawnSync(
+    process.execPath,
+    [
+      "dist/index.js",
+      "approve",
+      "task-write-1",
+      "--approver",
+      "alice",
+      "--db",
+      dbFilename,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(reapprove.status === 1, "approve should reject reused approvals from invalid states");
 
   const execute = spawnSync(
     process.execPath,
@@ -511,6 +527,38 @@ function testSubmitApproveRejectAndHandoff(): void {
     "complete-handoff should move task to handoff_completed",
   );
 
+  const missingTicketAdapter = new SqliteAdapter({ filename: dbFilename });
+  missingTicketAdapter.createActionRequest({
+    request: {
+      ...buildRequest("task-write-8"),
+      actionId: "action-write-8",
+      resourceId: join(tempDir, "missing-handoff.md"),
+    },
+    state: "handoff_required",
+  });
+  missingTicketAdapter.close();
+
+  const missingHandoffCompletion = spawnSync(
+    process.execPath,
+    [
+      "dist/index.js",
+      "complete-handoff",
+      "task-write-8",
+      "--resolver",
+      "alice",
+      "--summary",
+      "resolved",
+      "--db",
+      dbFilename,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+
+  assert(
+    missingHandoffCompletion.status === 4,
+    "complete-handoff should fail closed when no open ticket exists",
+  );
+
   const expiredRequestFile = join(tempDir, "expired-request.json");
   const expiredTargetFile = join(tempDir, "expired-record.md");
   writeFileSync(
@@ -576,6 +624,7 @@ function testSubmitApproveRejectAndHandoff(): void {
     inspectExpired.stdout.includes("approval_status: expired"),
     "inspect should report expired approval status",
   );
+  assert(!existsSync(expiredTargetFile), "expired approvals must not write target files");
 
   rmSync(tempDir, { recursive: true, force: true });
 }

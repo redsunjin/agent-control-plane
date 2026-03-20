@@ -160,6 +160,46 @@ function testAuditAppendAndRead(): void {
   adapter.close();
 }
 
+function testAuditFailureRollsBackTransaction(): void {
+  const adapter = new SqliteAdapter({ filename: ":memory:" });
+  const request = buildRequest("task-rollback");
+  let rolledBack = false;
+
+  try {
+    adapter.runInTransaction(() => {
+      adapter.createActionRequest({
+        request,
+        state: "received",
+      });
+
+      adapter.appendAuditEvent(
+        createAuditEvent({
+          eventId: "evt-rollback-1",
+          taskId: request.taskId,
+          eventType: "action.requested",
+          state: "received",
+          actorType: "agent",
+          actorId: request.actorId,
+          occurredAt: "2026-03-19T12:00:00.000Z",
+          prevEventHash: "unexpected-prev-hash",
+          payload: {
+            actionId: request.actionId,
+          },
+        }),
+      );
+    });
+  } catch (error) {
+    rolledBack = error instanceof AuditIntegrityError;
+  }
+
+  assert(rolledBack, "audit write failures should surface as integrity errors");
+  assert(
+    adapter.getActionRequest(request.taskId) === null,
+    "audit write failures should roll back the enclosing transaction",
+  );
+  adapter.close();
+}
+
 function testPolicyApprovalAndHandoffPersistence(): void {
   const adapter = new SqliteAdapter({ filename: ":memory:" });
   const request = buildRequest("task-3");
@@ -299,6 +339,7 @@ function testHandoffCompletionPersistence(): void {
 function run(): void {
   testActionRequestLifecycle();
   testAuditAppendAndRead();
+  testAuditFailureRollsBackTransaction();
   testPolicyApprovalAndHandoffPersistence();
   testExecutionResultPersistence();
   testHandoffCompletionPersistence();

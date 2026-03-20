@@ -16,7 +16,7 @@ This repository starts from a narrow MVP:
 - `packages/sqlite`
   - SQLite storage adapter
 - `packages/cli`
-  - CLI for submit, inspect, approve, reject, handoff, audit
+  - CLI for submit, inspect, approve, reject, handoff, complete-handoff, execute, verify-audit, and audit
 - `examples/local-record-update`
   - local example flow for the MVP
 
@@ -32,14 +32,38 @@ Canonical project docs now live in [`docs/`](./docs):
 
 These documents were adapted from the ideation workspace and are now the local source of truth for implementation in this repository.
 
-## Recommended First Coding Step
-Implement these first in `packages/core`:
-- domain types
-- state machine
-- audit event model
+## Current Status
+The MVP path is implemented locally:
+- `submit -> inspect -> approve -> execute -> verify-audit -> audit`
+- policy denial flow
+- unknown-field handoff flow
+- handoff completion
+- approval expiry and post-approval mutation fail-closed behavior
 
-After that:
-1. add SQLite persistence in `packages/sqlite`
-2. add read-path CLI in `packages/cli`
-3. add write-path CLI
-4. add local `record_update` executor example
+## Quick Start
+```bash
+npm install
+npm run build
+
+DB_FILE="$(pwd)/examples/local-record-update/demo.sqlite"
+
+node packages/cli/dist/index.js submit examples/local-record-update/requests/approved-markdown.json --db "$DB_FILE"
+node packages/cli/dist/index.js inspect demo-markdown-approval --db "$DB_FILE"
+node packages/cli/dist/index.js approve demo-markdown-approval --approver alice --db "$DB_FILE"
+node packages/cli/dist/index.js execute demo-markdown-approval --db "$DB_FILE"
+node packages/cli/dist/index.js verify-audit demo-markdown-approval --db "$DB_FILE"
+node packages/cli/dist/index.js audit demo-markdown-approval --db "$DB_FILE"
+```
+
+Additional example requests:
+- `examples/local-record-update/requests/deny-remote.yaml`
+- `examples/local-record-update/requests/handoff-unknown-field.json`
+
+## Validation
+```bash
+npm run check
+npm test
+```
+
+## Runtime Note
+The current SQLite adapter uses Node's `node:sqlite` module, which still emits an experimental warning on current Node releases.
